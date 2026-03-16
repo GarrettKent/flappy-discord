@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Flappy Bird</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #000;
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: 'Press Start 2P', monospace;
+  }
+  #game-wrapper {
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  canvas {
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+  #close-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 36px;
+    height: 36px;
+    background: rgba(0,0,0,0.45);
+    border: 2px solid rgba(255,255,255,0.5);
+    border-radius: 50%;
+    color: #fff;
+    font-size: 18px;
+    font-family: sans-serif;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    transition: background 0.15s, transform 0.1s;
+    line-height: 1;
+    padding: 0;
+  }
+  #close-btn:hover { background: rgba(200,50,40,0.7); transform: scale(1.1); }
+  #close-btn:active { transform: scale(0.95); }
+
+  #gameover-close {
+    position: absolute;
+    display: none;
+    z-index: 10;
+    padding: 8px 18px;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    background: #C03020;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    box-shadow: 0 3px 0 #802010, 0 4px 8px rgba(0,0,0,0.3);
+    transition: transform 0.1s, box-shadow 0.1s;
+    letter-spacing: 0.5px;
+  }
+  #gameover-close:hover { transform: translateY(-1px); box-shadow: 0 4px 0 #802010, 0 5px 10px rgba(0,0,0,0.35); }
+  #gameover-close:active { transform: translateY(2px); box-shadow: 0 1px 0 #802010; }
+</style>
+</head>
+<body>
+<div id="game-wrapper">
+  <canvas id="game"></canvas>
+  <button id="close-btn" title="Close">✕</button>
+  <button id="gameover-close">CLOSE</button>
+</div>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const closeBtn = document.getElementById('close-btn');
+const goCloseBtn = document.getElementById('gameover-close');
+
+const closeApp = () => {
+  try { window.close(); } catch(e) {}
+  // fallback: if window.close is blocked, try going back or show message
+  setTimeout(() => {
+    if (!window.closed) {
+      document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#aaa;font-family:sans-serif;font-size:16px;text-align:center;padding:20px;">You can close this tab now.</div>';
+    }
+  }, 300);
+};
+
+closeBtn.addEventListener('click', e => { e.stopPropagation(); closeApp(); });
+goCloseBtn.addEventListener('click', e => { e.stopPropagation(); closeApp(); });
+
+// --- Sizing ---
+const GAME_W = 288;
+const GAME_H = 512;
+let scale = 1;
+
+const resize = () => {
+  const sw = window.innerWidth, sh = window.innerHeight;
+  scale = Math.min(sw / GAME_W, sh / GAME_H);
+  canvas.width = GAME_W;
+  canvas.height = GAME_H;
+  canvas.style.width = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  positionGameOverClose();
+};
+
+const positionGameOverClose = () => {
+  // position relative to canvas center
+  const rect = canvas.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const panelBottom = rect.top + (310 * scale); // py(120) + ph(180) = 300, + padding
+  goCloseBtn.style.left = (cx - goCloseBtn.offsetWidth / 2) + 'px';
+  goCloseBtn.style.top = panelBottom + 'px';
+};
+
+window.addEventListener('resize', resize);
+resize();
+
+// --- Audio ---
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx;
+const ensureAudio = () => { if (!audioCtx) audioCtx = new AudioCtx(); };
+
+const playSound = (freq, type, dur, vol = 0.15) => {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + dur);
+};
+
+const sfx = {
+  flap: () => { playSound(440, 'sine', 0.12, 0.12); playSound(580, 'sine', 0.08, 0.08); },
+  score: () => { playSound(660, 'square', 0.08, 0.08); setTimeout(() => playSound(880, 'square', 0.12, 0.08), 80); },
+  hit: () => { playSound(200, 'sawtooth', 0.3, 0.15); playSound(120, 'square', 0.4, 0.1); },
+  swoosh: () => playSound(300, 'sine', 0.15, 0.06),
+};
+
+// --- Colors ---
+const C = {
+  sky1: '#4EC0CA', sky2: '#E8F5E0',
+  ground: '#DED895', groundDark: '#DAD085', groundLine: '#54854A',
+  pipe: '#74BF2E', pipeDark: '#548F1E', pipeHighlight: '#8CD848', pipeShadow: '#3A6A12', pipeRim: '#558B2A',
+  bird1: '#F8C830', bird2: '#E8A020', birdWing: '#E07818', birdEye: '#FFFFFF', birdPupil: '#383838', birdBeak: '#E84830',
+  white: '#FFFFFF', shadow: 'rgba(0,0,0,0.25)',
+  medalGold: '#E8B830', medalSilver: '#C0C0C0', medalBronze: '#CD7F32',
+};
+
+// --- Game State ---
+const GRAVITY = 0.45, FLAP_VEL = -7.5, PIPE_SPEED = 1.76, PIPE_GAP = 120;
+const PIPE_W = 52, PIPE_FREQ = 90, GROUND_H = 80, BIRD_X = 70, BIRD_R = 15;
+
+let state = 'menu';
+let bird = { y: GAME_H / 2 - 20, vy: 0, rot: 0, flapFrame: 0 };
+let pipes = [];
+let groundX = 0;
+let score = 0;
+let best = parseInt(localStorage.getItem('flappy_best') || '0');
+let frameCount = 0;
+let flashAlpha = 0;
+let deathTimer = 0;
+let menuBobT = 0;
+
+const groundDots = [];
+for (let i = 0; i < 40; i++) groundDots.push({ x: Math.random() * GAME_W * 2, y: Math.random() * (GROUND_H - 16) + 8, s: Math.random() * 2 + 1 });
+
+// --- Input ---
+const flap = () => {
+  ensureAudio();
+  if (state === 'menu') {
+    state = 'playing';
+    bird = { y: GAME_H / 2 - 20, vy: FLAP_VEL, rot: -25, flapFrame: 0 };
+    pipes = [];
+    score = 0;
+    frameCount = 0;
+    goCloseBtn.style.display = 'none';
+    sfx.flap();
+    sfx.swoosh();
+    return;
+  }
+  if (state === 'playing') {
+    bird.vy = FLAP_VEL;
+    bird.rot = -25;
+    bird.flapFrame = 0;
+    sfx.flap();
+    return;
+  }
+  if (state === 'dead') {
+    state = 'menu';
+    bird = { y: GAME_H / 2 - 20, vy: 0, rot: 0, flapFrame: 0 };
+    goCloseBtn.style.display = 'none';
+    sfx.swoosh();
+  }
+};
+
+canvas.addEventListener('pointerdown', e => { e.preventDefault(); flap(); });
+document.addEventListener('keydown', e => { if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); flap(); } });
+
+// --- Drawing Helpers ---
+const drawRoundRect = (x, y, w, h, r) => {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+};
+
+const drawSky = () => {
+  const grad = ctx.createLinearGradient(0, 0, 0, GAME_H - GROUND_H);
+  grad.addColorStop(0, C.sky1);
+  grad.addColorStop(1, C.sky2);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, GAME_W, GAME_H - GROUND_H);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  const drawCloud = (cx, cy, s) => {
+    ctx.beginPath();
+    ctx.arc(cx, cy, 20 * s, 0, Math.PI * 2);
+    ctx.arc(cx + 18 * s, cy - 6 * s, 16 * s, 0, Math.PI * 2);
+    ctx.arc(cx - 14 * s, cy + 2 * s, 14 * s, 0, Math.PI * 2);
+    ctx.arc(cx + 8 * s, cy + 4 * s, 12 * s, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  const t = frameCount * 0.3;
+  drawCloud(((80 - t * 0.15) % (GAME_W + 80)) - 40, 60, 1);
+  drawCloud(((200 - t * 0.1) % (GAME_W + 80)) - 40, 100, 0.8);
+  drawCloud(((320 - t * 0.12) % (GAME_W + 80)) - 40, 45, 0.6);
+};
+
+const drawGround = () => {
+  const gy = GAME_H - GROUND_H;
+  ctx.fillStyle = C.groundLine;
+  ctx.fillRect(0, gy, GAME_W, 3);
+  ctx.fillStyle = C.ground;
+  ctx.fillRect(0, gy + 3, GAME_W, GROUND_H);
+
+  ctx.fillStyle = C.groundDark;
+  for (let i = -1; i < GAME_W / 24 + 2; i++) {
+    const dx = ((i * 24 - groundX) % (GAME_W + 48) + GAME_W + 48) % (GAME_W + 48) - 24;
+    ctx.fillRect(dx, gy + 3, 12, 12);
+    ctx.fillRect(dx + 12, gy + 15, 12, 12);
+  }
+
+  ctx.fillStyle = '#C8C070';
+  groundDots.forEach(d => {
+    const dx = ((d.x - groundX) % (GAME_W * 2) + GAME_W * 2) % (GAME_W * 2);
+    ctx.fillRect(dx, gy + 28 + d.y, d.s, d.s);
+  });
+};
+
+const drawPipe = (px, topH, botY) => {
+  const bodyW = PIPE_W - 4;
+  const rimW = PIPE_W + 6;
+  const rimH = 24;
+
+  ctx.fillStyle = C.pipe;
+  ctx.fillRect(px + 2, 0, bodyW, topH - rimH);
+  ctx.fillStyle = C.pipeHighlight;
+  ctx.fillRect(px + 2, 0, 6, topH - rimH);
+  ctx.fillStyle = C.pipeShadow;
+  ctx.fillRect(px + bodyW - 4, 0, 6, topH - rimH);
+
+  ctx.fillStyle = C.pipeRim;
+  drawRoundRect(px - 1, topH - rimH, rimW, rimH, 4); ctx.fill();
+  ctx.fillStyle = C.pipeHighlight;
+  ctx.fillRect(px + 1, topH - rimH + 2, 6, rimH - 4);
+  ctx.fillStyle = C.pipeShadow;
+  ctx.fillRect(px + rimW - 8, topH - rimH + 2, 6, rimH - 4);
+
+  const botH = GAME_H - GROUND_H - botY;
+  ctx.fillStyle = C.pipe;
+  ctx.fillRect(px + 2, botY + rimH, bodyW, botH - rimH);
+  ctx.fillStyle = C.pipeHighlight;
+  ctx.fillRect(px + 2, botY + rimH, 6, botH - rimH);
+  ctx.fillStyle = C.pipeShadow;
+  ctx.fillRect(px + bodyW - 4, botY + rimH, 6, botH - rimH);
+
+  ctx.fillStyle = C.pipeRim;
+  drawRoundRect(px - 1, botY, rimW, rimH, 4); ctx.fill();
+  ctx.fillStyle = C.pipeHighlight;
+  ctx.fillRect(px + 1, botY + 2, 6, rimH - 4);
+  ctx.fillStyle = C.pipeShadow;
+  ctx.fillRect(px + rimW - 8, botY + 2, 6, rimH - 4);
+};
+
+const drawBird = (bx, by, rot, flapF) => {
+  ctx.save();
+  ctx.translate(bx, by);
+  ctx.rotate(rot * Math.PI / 180);
+
+  const wingY = Math.sin(flapF * 0.6) * 6;
+
+  ctx.fillStyle = C.shadow;
+  ctx.beginPath(); ctx.ellipse(2, 3, BIRD_R, BIRD_R - 2, 0, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = C.bird1;
+  ctx.beginPath(); ctx.ellipse(0, 0, BIRD_R, BIRD_R - 2, 0, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = C.bird2;
+  ctx.beginPath(); ctx.ellipse(2, 3, BIRD_R - 4, BIRD_R - 5, 0, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = C.birdWing;
+  ctx.beginPath(); ctx.ellipse(-3, wingY - 1, 10, 6, -0.2, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = C.birdEye;
+  ctx.beginPath(); ctx.arc(8, -5, 6, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = C.birdPupil;
+  ctx.beginPath(); ctx.arc(10, -5, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#FFF';
+  ctx.beginPath(); ctx.arc(11, -7, 1.2, 0, Math.PI * 2); ctx.fill();
+
+  ctx.fillStyle = C.birdBeak;
+  ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(22, 2); ctx.lineTo(12, 6); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#C03020';
+  ctx.fillRect(12, 2.5, 10, 1.5);
+
+  ctx.restore();
+};
+
+const drawScore = (s, x, y, size = 28) => {
+  ctx.font = size + 'px "Press Start 2P"';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = C.shadow;
+  ctx.fillText(s.toString(), x + 2, y + 2);
+  ctx.fillStyle = C.white;
+  ctx.fillText(s.toString(), x, y);
+};
+
+const drawMedal = (x, y, r, color) => {
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath(); ctx.arc(x + 2, y + 2, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.beginPath(); ctx.arc(x - r * 0.25, y - r * 0.25, r * 0.5, 0, Math.PI * 2); ctx.fill();
+};
+
+const drawGameOver = () => {
+  const pw = 220, ph = 180;
+  const px = (GAME_W - pw) / 2, py = 120;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  drawRoundRect(px + 4, py + 4, pw, ph, 12); ctx.fill();
+
+  ctx.fillStyle = '#E8D4A0';
+  drawRoundRect(px, py, pw, ph, 12); ctx.fill();
+  ctx.strokeStyle = '#8B7B50'; ctx.lineWidth = 3;
+  drawRoundRect(px, py, pw, ph, 12); ctx.stroke();
+
+  ctx.strokeStyle = '#C8B880'; ctx.lineWidth = 1.5;
+  drawRoundRect(px + 8, py + 8, pw - 16, ph - 16, 8); ctx.stroke();
+
+  ctx.font = '14px "Press Start 2P"';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#C03020';
+  ctx.fillText('GAME OVER', GAME_W / 2, py + 24);
+
+  let medalColor = null;
+  if (score >= 40) medalColor = C.medalGold;
+  else if (score >= 20) medalColor = C.medalSilver;
+  else if (score >= 10) medalColor = C.medalBronze;
+  if (medalColor) drawMedal(px + 46, py + 80, 20, medalColor);
+
+  ctx.font = '10px "Press Start 2P"';
+  ctx.textAlign = 'left'; ctx.fillStyle = '#5A4E32';
+  ctx.fillText('SCORE', px + 80, py + 58);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#383838';
+  ctx.font = '12px "Press Start 2P"';
+  ctx.fillText(score.toString(), px + pw - 20, py + 56);
+
+  ctx.font = '10px "Press Start 2P"';
+  ctx.textAlign = 'left'; ctx.fillStyle = '#5A4E32';
+  ctx.fillText('BEST', px + 80, py + 90);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#383838';
+  ctx.font = '12px "Press Start 2P"';
+  ctx.fillText(best.toString(), px + pw - 20, py + 88);
+
+  // "TAP TO RETRY" blink
+  ctx.font = '9px "Press Start 2P"';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#8B7B50';
+  if (Math.sin(frameCount * 0.08) > 0) ctx.fillText('TAP TO RETRY', GAME_W / 2, py + ph - 24);
+
+  // Show the HTML close button
+  goCloseBtn.style.display = 'block';
+  positionGameOverClose();
+};
+
+const drawMenu = () => {
+  menuBobT += 0.05;
+
+  const ty = 100 + Math.sin(menuBobT) * 8;
+  ctx.font = '28px "Press Start 2P"'; ctx.textAlign = 'center';
+  ctx.fillStyle = C.shadow; ctx.fillText('FLAPPY', GAME_W / 2 + 2, ty + 2);
+  ctx.fillStyle = C.white; ctx.fillText('FLAPPY', GAME_W / 2, ty);
+
+  ctx.font = '16px "Press Start 2P"';
+  ctx.fillStyle = C.shadow; ctx.fillText('BIRD', GAME_W / 2 + 2, ty + 38);
+  ctx.fillStyle = '#F8E858'; ctx.fillText('BIRD', GAME_W / 2, ty + 36);
+
+  const birdMenuY = 240 + Math.sin(menuBobT * 1.5) * 12;
+  drawBird(GAME_W / 2, birdMenuY, Math.sin(menuBobT * 2) * 10, frameCount);
+
+  ctx.font = '10px "Press Start 2P"'; ctx.textAlign = 'center';
+  if (Math.sin(frameCount * 0.06) > 0) {
+    ctx.fillStyle = C.shadow; ctx.fillText('TAP TO PLAY', GAME_W / 2 + 1, 340 + 1);
+    ctx.fillStyle = C.white; ctx.fillText('TAP TO PLAY', GAME_W / 2, 340);
+  }
+
+  if (best > 0) {
+    ctx.font = '8px "Press Start 2P"'; ctx.fillStyle = '#6A8E4A';
+    ctx.fillText('BEST: ' + best, GAME_W / 2, 380);
+  }
+};
+
+// --- Collision ---
+const hitTest = () => {
+  const bx = BIRD_X, by = bird.y, r = BIRD_R - 3;
+  if (by + r > GAME_H - GROUND_H || by - r < 0) return true;
+  for (const p of pipes) {
+    const topH = p.topH, botY = topH + PIPE_GAP;
+    const left = p.x - 1, right = p.x + PIPE_W + 5;
+    if (bx + r > left && bx - r < right) {
+      if (by - r < topH || by + r > botY) return true;
+    }
+  }
+  return false;
+};
+
+// --- Update ---
+const update = () => {
+  frameCount++;
+
+  if (state === 'menu') {
+    groundX = (groundX + 1) % (GAME_W * 2);
+    return;
+  }
+
+  if (state === 'playing') {
+    bird.vy += GRAVITY;
+    bird.y += bird.vy;
+    bird.flapFrame++;
+    if (bird.vy > 0) bird.rot = Math.min(bird.rot + 2.5, 70);
+    else bird.rot = Math.max(bird.rot, -25);
+
+    groundX = (groundX + PIPE_SPEED) % (GAME_W * 2);
+
+    if (frameCount % PIPE_FREQ === 0) {
+      const minTop = 60, maxTop = GAME_H - GROUND_H - PIPE_GAP - 60;
+      pipes.push({ x: GAME_W + 10, topH: Math.random() * (maxTop - minTop) + minTop, scored: false });
+    }
+
+    pipes.forEach(p => { p.x -= PIPE_SPEED; });
+    pipes = pipes.filter(p => p.x > -PIPE_W - 20);
+
+    pipes.forEach(p => {
+      if (!p.scored && p.x + PIPE_W / 2 < BIRD_X) {
+        p.scored = true;
+        score++;
+        sfx.score();
+      }
+    });
+
+    if (hitTest()) {
+      state = 'dying';
+      deathTimer = 0;
+      flashAlpha = 1;
+      sfx.hit();
+      if (score > best) {
+        best = score;
+        localStorage.setItem('flappy_best', best.toString());
+      }
+    }
+  }
+
+  if (state === 'dying') {
+    deathTimer++;
+    bird.vy += GRAVITY;
+    bird.y += bird.vy;
+    bird.rot = Math.min(bird.rot + 4, 90);
+    flashAlpha = Math.max(0, flashAlpha - 0.08);
+    if (bird.y > GAME_H - GROUND_H - BIRD_R) {
+      bird.y = GAME_H - GROUND_H - BIRD_R;
+      bird.vy = 0;
+    }
+    if (deathTimer > 50) state = 'dead';
+  }
+};
+
+// --- Render ---
+const render = () => {
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+  drawSky();
+  pipes.forEach(p => drawPipe(p.x, p.topH, p.topH + PIPE_GAP));
+  drawGround();
+  drawBird(BIRD_X, bird.y, bird.rot, bird.flapFrame);
+
+  if (state === 'playing') drawScore(score, GAME_W / 2, 40);
+  if (state === 'menu') drawMenu();
+  if (state === 'dead') drawGameOver();
+
+  if (state !== 'dead') goCloseBtn.style.display = 'none';
+
+  if (flashAlpha > 0) {
+    ctx.fillStyle = `rgba(255,255,255,${flashAlpha})`;
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+  }
+};
+
+const loop = () => { update(); render(); requestAnimationFrame(loop); };
+loop();
+</script>
+</body>
+</html>
