@@ -91,15 +91,7 @@ const ctx = canvas.getContext('2d');
 const closeBtn = document.getElementById('close-btn');
 const goCloseBtn = document.getElementById('gameover-close');
 
-const closeApp = () => {
-  try { window.close(); } catch(e) {}
-  // fallback: if window.close is blocked, try going back or show message
-  setTimeout(() => {
-    if (!window.closed) {
-      document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#aaa;font-family:sans-serif;font-size:16px;text-align:center;padding:20px;">You can close this tab now.</div>';
-    }
-  }, 300);
-};
+const closeApp = () => { try { window.close(); } catch(e) {} };
 
 closeBtn.addEventListener('click', e => { e.stopPropagation(); closeApp(); });
 goCloseBtn.addEventListener('click', e => { e.stopPropagation(); closeApp(); });
@@ -521,7 +513,7 @@ const render = () => {
   drawSky();
   pipes.forEach(p => drawPipe(p.x, p.topH, p.topH + PIPE_GAP));
   drawGround();
-  drawBird(BIRD_X, bird.y, bird.rot, bird.flapFrame);
+  if (state !== 'menu') drawBird(BIRD_X, bird.y, bird.rot, bird.flapFrame);
 
   if (state === 'playing') drawScore(score, GAME_W / 2, 40);
   if (state === 'menu') drawMenu();
