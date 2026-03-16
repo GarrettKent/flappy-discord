@@ -93,8 +93,8 @@ const goCloseBtn = document.getElementById('gameover-close');
 
 const closeApp = () => { try { window.close(); } catch(e) {} };
 
-closeBtn.addEventListener('click', e => { e.stopPropagation(); closeApp(); });
-goCloseBtn.addEventListener('click', e => { e.stopPropagation(); closeApp(); });
+closeBtn.addEventListener('pointerdown', e => { e.stopPropagation(); closeApp(); });
+goCloseBtn.addEventListener('pointerdown', e => { e.stopPropagation(); closeApp(); });
 
 // --- Sizing ---
 const GAME_W = 288;
